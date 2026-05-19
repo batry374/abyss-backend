@@ -1,6 +1,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -15,7 +17,8 @@ const UserSchema = new mongoose.Schema({
     password: { type: String, required: true },
     role: { type: String, default: 'user' },
     hasSubscription: { type: Boolean, default: false },
-    expiryDate: { type: Date, default: null }
+    expiryDate: { type: Date, default: null },
+    hwid: { type: String, default: null }
 });
 
 const KeySchema = new mongoose.Schema({
@@ -48,8 +51,8 @@ app.post('/api/register', async (req, res) => {
 // Login
 app.post('/api/login', async (req, res) => {
     try {
-        const { loginId, password } = req.body;
-        console.log('Login attempt:', loginId);
+        const { loginId, password, hwid } = req.body;
+        console.log('Login attempt:', loginId, 'with HWID:', hwid);
         
         const user = await User.findOne({ 
             $or: [{ username: loginId }, { email: loginId }],
@@ -57,10 +60,19 @@ app.post('/api/login', async (req, res) => {
         });
         
         if (user) {
+            if (hwid) {
+                if (!user.hwid) {
+                    user.hwid = hwid;
+                    await user.save();
+                } else if (user.hwid !== hwid) {
+                    console.log('HWID Mismatch for user:', user.username);
+                    return res.status(401).json({ error: 'HWID не совпадает с привязанным к этому аккаунту!' });
+                }
+            }
             console.log('Login success:', user.username);
             res.json(user);
         } else {
-            res.status(401).json({ error: 'Invalid credentials' });
+            res.status(401).json({ error: 'Неверные данные для входа' });
         }
     } catch (err) {
         console.error('Login error:', err);
@@ -135,6 +147,26 @@ app.get('/api/admin/keys/:adminUser', async (req, res) => {
         res.json(keys);
     } catch (err) {
         res.status(500).json({ error: 'Fetch failed' });
+    }
+});
+
+// Secure Client Download
+app.get('/api/download/:username/:password', async (req, res) => {
+    try {
+        const user = await User.findOne({ username: req.params.username, password: req.params.password });
+        
+        if (user && user.hasSubscription && user.expiryDate > new Date()) {
+            const filePath = path.join(__dirname, 'AbyssClient.jar');
+            if (fs.existsSync(filePath)) {
+                res.download(filePath);
+            } else {
+                res.status(404).send('Файл клиента пока не загружен на сервер. Положите файл AbyssClient.jar в папку abyss-server.');
+            }
+        } else {
+            res.status(403).send('У вас нет активной подписки для скачивания клиента.');
+        }
+    } catch (err) {
+        res.status(500).send('Ошибка сервера при скачивании');
     }
 });
 
