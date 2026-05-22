@@ -3,11 +3,25 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Rate limiting для защиты от брутфорса
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 минут
+    max: 5, // максимум 5 попыток
+    message: { error: 'Слишком много попыток входа. Попробуйте через 15 минут.' }
+});
+
+const apiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 минута
+    max: 30, // максимум 30 запросов в минуту
+    message: { error: 'Слишком много запросов. Попробуйте позже.' }
+});
 
 // --- Database Models ---
 
@@ -49,9 +63,15 @@ app.post('/api/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
     try {
         const { loginId, password, hwid } = req.body;
+        
+        // Валидация входных данных
+        if (!loginId || !password) {
+            return res.status(400).json({ error: 'Заполните все поля' });
+        }
+        
         console.log('Login attempt:', loginId, 'with HWID:', hwid);
         
         const user = await User.findOne({ 
@@ -70,7 +90,12 @@ app.post('/api/login', async (req, res) => {
                 }
             }
             console.log('Login success:', user.username);
-            res.json(user);
+            
+            // Удаляем пароль из ответа для безопасности
+            const userResponse = user.toObject();
+            delete userResponse.password;
+            
+            res.json(userResponse);
         } else {
             res.status(401).json({ error: 'Неверные данные для входа' });
         }
@@ -81,9 +106,15 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Activate Key
-app.post('/api/activate-key', async (req, res) => {
+app.post('/api/activate-key', apiLimiter, async (req, res) => {
     try {
         const { username, keycode } = req.body;
+        
+        // Валидация входных данных
+        if (!username || !keycode) {
+            return res.status(400).json({ error: 'Заполните все поля' });
+        }
+        
         const key = await Key.findOne({ code: keycode, used: false });
         
         if (!key) return res.status(404).json({ error: 'Invalid or used key' });
@@ -101,7 +132,11 @@ app.post('/api/activate-key', async (req, res) => {
         user.expiryDate = now;
         await user.save();
 
-        res.json(user);
+        // Удаляем пароль из ответа
+        const userResponse = user.toObject();
+        delete userResponse.password;
+        
+        res.json(userResponse);
     } catch (err) {
         console.error('Key error:', err);
         res.status(500).json({ error: 'Activation failed' });
@@ -123,9 +158,15 @@ app.get('/api/check-sub/:username', async (req, res) => {
 });
 
 // Admin: Generate Key
-app.post('/api/admin/gen-key', async (req, res) => {
+app.post('/api/admin/gen-key', apiLimiter, async (req, res) => {
     try {
         const { adminUser, days } = req.body;
+        
+        // Строгая проверка типов для adminUser
+        if (typeof adminUser !== 'string' || !adminUser) {
+            return res.status(400).json({ error: 'Invalid admin identifier' });
+        }
+        
         const admin = await User.findOne({ username: adminUser, role: 'admin' });
         if (!admin) return res.status(403).json({ error: 'Unauthorized' });
 
@@ -139,10 +180,18 @@ app.post('/api/admin/gen-key', async (req, res) => {
 });
 
 // Admin: Get All Keys
-app.get('/api/admin/keys/:adminUser', async (req, res) => {
+app.get('/api/admin/keys/:adminUser', apiLimiter, async (req, res) => {
     try {
-        const admin = await User.findOne({ username: req.params.adminUser, role: 'admin' });
+        const adminUser = req.params.adminUser;
+        
+        // Строгая проверка типов для adminUser
+        if (typeof adminUser !== 'string' || !adminUser) {
+            return res.status(400).json({ error: 'Invalid admin identifier' });
+        }
+        
+        const admin = await User.findOne({ username: adminUser, role: 'admin' });
         if (!admin) return res.status(403).json({ error: 'Unauthorized' });
+        
         const keys = await Key.find().sort({ _id: -1 });
         res.json(keys);
     } catch (err) {
@@ -151,21 +200,38 @@ app.get('/api/admin/keys/:adminUser', async (req, res) => {
 });
 
 // Secure Client Download
-app.get('/api/download/:username/:password', async (req, res) => {
+app.get('/api/download/:username/:password', apiLimiter, async (req, res) => {
     try {
-        const user = await User.findOne({ username: req.params.username, password: req.params.password });
+        const { username, password } = req.params;
         
-        if (user && user.hasSubscription && user.expiryDate > new Date()) {
-            const filePath = path.join(__dirname, 'AbyssClient.jar');
-            if (fs.existsSync(filePath)) {
-                res.download(filePath);
-            } else {
-                res.status(404).send('Файл клиента пока не загружен на сервер. Положите файл AbyssClient.jar в папку abyss-server.');
-            }
+        // Валидация входных данных
+        if (!username || !password) {
+            return res.status(400).send('Неверные параметры запроса');
+        }
+        
+        const user = await User.findOne({ username, password });
+        
+        // Проверка подписки перед скачиванием
+        if (!user) {
+            return res.status(403).send('Неверные данные для входа');
+        }
+        
+        if (!user.hasSubscription) {
+            return res.status(403).send('У вас нет активной подписки для скачивания клиента.');
+        }
+        
+        if (!user.expiryDate || user.expiryDate <= new Date()) {
+            return res.status(403).send('Ваша подписка истекла. Активируйте новый ключ.');
+        }
+        
+        const filePath = path.join(__dirname, 'AbyssClient.jar');
+        if (fs.existsSync(filePath)) {
+            res.download(filePath);
         } else {
-            res.status(403).send('У вас нет активной подписки для скачивания клиента.');
+            res.status(404).send('Файл клиента пока не загружен на сервер.');
         }
     } catch (err) {
+        console.error('Download error:', err);
         res.status(500).send('Ошибка сервера при скачивании');
     }
 });
