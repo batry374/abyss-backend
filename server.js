@@ -3,14 +3,15 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const rateLimit = require('express-rate-limit');
+// const rateLimit = require('express-rate-limit'); // ВРЕМЕННО ОТКЛЮЧЕНО
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Rate limiting для защиты от брутфорса
+// Rate limiting для защиты от брутфорса - ВРЕМЕННО ОТКЛЮЧЕНО
+/*
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 минут
     max: 5, // максимум 5 попыток
@@ -22,6 +23,7 @@ const apiLimiter = rateLimit({
     max: 30, // максимум 30 запросов в минуту
     message: { error: 'Слишком много запросов. Попробуйте позже.' }
 });
+*/
 
 // --- Database Models ---
 
@@ -63,7 +65,7 @@ app.post('/api/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/login', loginLimiter, async (req, res) => {
+app.post('/api/login', async (req, res) => {
     try {
         const { loginId, password, hwid } = req.body;
         
@@ -106,7 +108,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 });
 
 // Activate Key
-app.post('/api/activate-key', apiLimiter, async (req, res) => {
+app.post('/api/activate-key', async (req, res) => {
     try {
         const { username, keycode } = req.body;
         
@@ -158,7 +160,7 @@ app.get('/api/check-sub/:username', async (req, res) => {
 });
 
 // Admin: Generate Key
-app.post('/api/admin/gen-key', apiLimiter, async (req, res) => {
+app.post('/api/admin/gen-key', async (req, res) => {
     try {
         const { adminUser, days } = req.body;
         
@@ -180,7 +182,7 @@ app.post('/api/admin/gen-key', apiLimiter, async (req, res) => {
 });
 
 // Admin: Get All Keys
-app.get('/api/admin/keys/:adminUser', apiLimiter, async (req, res) => {
+app.get('/api/admin/keys/:adminUser', async (req, res) => {
     try {
         const adminUser = req.params.adminUser;
         
@@ -200,7 +202,7 @@ app.get('/api/admin/keys/:adminUser', apiLimiter, async (req, res) => {
 });
 
 // Secure Client Download
-app.get('/api/download/:username/:password', apiLimiter, async (req, res) => {
+app.get('/api/download/:username/:password', async (req, res) => {
     try {
         const { username, password } = req.params;
         
