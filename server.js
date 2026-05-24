@@ -3,27 +3,55 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-// const rateLimit = require('express-rate-limit'); // ВРЕМЕННО ОТКЛЮЧЕНО
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+
+// Security-заголовки
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false
+}));
+// Разрешаем запросы только с твоего фронтенда
+app.use(cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true
+}));
 app.use(express.json());
 
-// Rate limiting для защиты от брутфорса - ВРЕМЕННО ОТКЛЮЧЕНО
-/*
+// --- Rate Limiting ---
+
+// Лимит на логин: 5 попыток за 15 минут с одного IP
 const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 минут
-    max: 5, // максимум 5 попыток
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
     message: { error: 'Слишком много попыток входа. Попробуйте через 15 минут.' }
 });
 
+// Лимит на регистрацию: 3 попытки за 30 минут с одного IP
+const registerLimiter = rateLimit({
+    windowMs: 30 * 60 * 1000,
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Слишком много попыток регистрации. Попробуйте позже.' }
+});
+
+// Общий лимит API: 60 запросов в минуту с одного IP
 const apiLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 минута
-    max: 30, // максимум 30 запросов в минуту
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
     message: { error: 'Слишком много запросов. Попробуйте позже.' }
 });
-*/
+
+// Применяем общий лимит ко всем /api маршрутам
+app.use('/api', apiLimiter);
 
 // --- Database Models ---
 
@@ -50,7 +78,7 @@ const Key = mongoose.model('Key', KeySchema);
 // --- API Routes ---
 
 // Registration
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', registerLimiter, async (req, res) => {
     try {
         const { username, email, password } = req.body;
         if (!username || !email || !password) return res.status(400).json({ error: 'Missing fields' });
@@ -65,7 +93,7 @@ app.post('/api/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
     try {
         const { loginId, password, hwid } = req.body;
         
