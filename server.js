@@ -190,15 +190,20 @@ app.get('/api/check-sub/:username', async (req, res) => {
 // Admin: Generate Key
 app.post('/api/admin/gen-key', async (req, res) => {
     try {
-        const { adminUser, days } = req.body;
+        const { adminUser, adminPassword, days } = req.body;
         
-        // Строгая проверка типов для adminUser
-        if (typeof adminUser !== 'string' || !adminUser) {
-            return res.status(400).json({ error: 'Invalid admin identifier' });
+        if (typeof adminUser !== 'string' || !adminUser || !adminPassword) {
+            return res.status(400).json({ error: 'Invalid request' });
         }
         
+        // Проверяем что пользователь существует, имеет роль admin И пароль совпадает
         const admin = await User.findOne({ username: adminUser, role: 'admin' });
         if (!admin) return res.status(403).json({ error: 'Unauthorized' });
+        
+        // Проверяем пароль
+        if (admin.password !== adminPassword) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
 
         const code = 'ABYSS-' + Math.random().toString(36).substr(2, 9).toUpperCase();
         const newKey = new Key({ code, days: parseInt(days) });
@@ -213,14 +218,19 @@ app.post('/api/admin/gen-key', async (req, res) => {
 app.get('/api/admin/keys/:adminUser', async (req, res) => {
     try {
         const adminUser = req.params.adminUser;
+        const adminPassword = req.headers['x-admin-password'];
         
-        // Строгая проверка типов для adminUser
-        if (typeof adminUser !== 'string' || !adminUser) {
-            return res.status(400).json({ error: 'Invalid admin identifier' });
+        if (typeof adminUser !== 'string' || !adminUser || !adminPassword) {
+            return res.status(400).json({ error: 'Invalid request' });
         }
         
         const admin = await User.findOne({ username: adminUser, role: 'admin' });
         if (!admin) return res.status(403).json({ error: 'Unauthorized' });
+        
+        // Проверяем пароль через заголовок
+        if (admin.password !== adminPassword) {
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
         
         const keys = await Key.find().sort({ _id: -1 });
         res.json(keys);
